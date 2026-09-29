@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=64.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nano-xet"
+version = "0.1.0"
+description = "A toy Xet: fsspec filesystem with gear-hash chunking, deduplication and xorbs, on any filesystem"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Quentin Lhoest" }]
+keywords = ["fsspec", "deduplication", "chunking", "xet", "filesystem"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Filesystems",
+]
+dependencies = ["fsspec>=2023.1.0"]
+
+[project.optional-dependencies]
+fast = ["numpy>=1.20"]
+test = ["pytest>=7.0", "numpy>=1.20"]
+dev = ["pytest>=7.0", "numpy>=1.20", "ruff"]
+
+[project.scripts]
+nxet = "nano_xet.cli:main"
+
+[project.entry-points."fsspec.specs"]
+nxet = "nano_xet.fsspec_impl.NXetFileSystem"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
