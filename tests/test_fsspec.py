@@ -314,3 +314,21 @@ def test_index_reloads_when_another_process_writes(store_path, csv_data):
     writer.pipe_file("written/later.csv", csv_data)
     assert reader.cat_file("written/later.csv") == csv_data
     assert reader.info("written/later.csv")["size"] == len(csv_data)
+
+
+def test_chained_uri_on_memory_filesystem():
+    """An empty underlying path is valid: the store sits at the root of that fs."""
+    import uuid
+
+    import fsspec
+
+    token = uuid.uuid4().hex
+    with fsspec.open(f"nxet://a/b.txt::memory:///{token}", "wb") as f:
+        f.write(b"hello memory xet\n")
+    with fsspec.open(f"nxet://a/b.txt::memory:///{token}", "rb") as f:
+        assert f.read() == b"hello memory xet\n"
+
+    fs = fsspec.filesystem("nxet", fo=f"memory:///{uuid.uuid4().hex}")
+    fs.pipe_file("a/b.txt", b"hello memory xet\n")
+    assert fs.cat_file("a/b.txt") == b"hello memory xet\n"
+    assert "nxet.json" in [name.rsplit("/", 1)[-1] for name in fs.underlying_fs.find(fs.root)]

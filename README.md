@@ -167,12 +167,14 @@ chunking; the pure Python path keeps nano-xet dependency-free apart from fsspec.
 - `gc` must be run when files are deleted; unreferenced xorbs are only garbage.
 - Chunking is Xet-compatible, but the file *hash* is not a Xet merkle hash, so nano-xet
   stores and Xet stores are not interchangeable.
+- `memory://` works as an underlying filesystem for tests and demos, but it is per-process:
+  two `nxet` commands do not share it.
 
 ## Development
 
 ```bash
 pip install -e ".[test,fast]"
-pytest -q                     # 162 passed
+pytest -q                     # 163 passed, 1 xfailed
 python examples/demo.py
 ruff check src tests examples
 ```

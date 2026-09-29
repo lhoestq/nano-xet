@@ -85,7 +85,7 @@ class NXetFileSystem(fsspec.AbstractFileSystem):
         target_options = dict(kwargs.get("target_options") or {})
         target_protocol = kwargs.get("target_protocol")
         location = underlying_location(fo)
-        if not location:
+        if not location and target_protocol is None:
             return None
         try:
             if target_protocol is None:
@@ -117,7 +117,7 @@ class NXetFileSystem(fsspec.AbstractFileSystem):
         super().__init__(**kwargs)
         location = underlying_location(fo)
         target_options = dict(target_options or {})
-        if not location:
+        if not location and target_protocol is None:
             raise ValueError(
                 "nxet:// needs an underlying filesystem to store its xorbs, e.g. "
                 "'nxet://data.csv::file:///tmp/my-nxet-store' or "
@@ -126,6 +126,7 @@ class NXetFileSystem(fsspec.AbstractFileSystem):
         if target_protocol is None:
             underlying_fs, root = fsspec.core.url_to_fs(location, **target_options)
         else:
+            # an empty location is valid here: the store sits at the root of that fs
             underlying_fs = fsspec.filesystem(target_protocol, **target_options)
             root = underlying_fs._strip_protocol(location)
         if getattr(self, "store", None) is not None:
