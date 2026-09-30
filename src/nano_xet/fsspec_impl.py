@@ -46,6 +46,15 @@ def underlying_location(fo: str) -> str:
     return "" if path.startswith(f"{PROTOCOL}:") else path
 
 
+def store_location(fo: str = "", store_uri: str = "") -> str:
+    """Store location from the arguments of ``NXetFileSystem``.
+
+    An explicit ``fo`` (or a chained ``nxet://`` uri) wins over ``store_uri``,
+    the fallback meant for ``FSSPEC_NXET_STORE_URI``.
+    """
+    return underlying_location(fo or "") or underlying_location(store_uri or "")
+
+
 class NXetFileSystem(fsspec.AbstractFileSystem):
     """Read/write files stored in nano-xet (gear-hash chunks + xorbs + dedup).
 
@@ -56,6 +65,11 @@ class NXetFileSystem(fsspec.AbstractFileSystem):
         ``"/tmp/my-store"`` together with ``target_protocol="file"``, or a full
         url such as ``"file:///tmp/my-store"``. This is what follows the ``::``
         of a chained ``nxet://`` URI.
+    store_uri: str
+        Alias of ``fo`` for the case where the uri only carries the file path
+        (``nxet://data/train.csv``). fsspec fills keyword arguments from the
+        environment, so ``FSSPEC_NXET_STORE_URI=/tmp/my-store`` is enough to
+        work with plain ``nxet://`` paths; an explicit ``fo`` still wins.
     target_protocol: str
         Protocol of the underlying filesystem; inferred from ``fo`` if not given.
     target_options: dict
@@ -84,7 +98,7 @@ class NXetFileSystem(fsspec.AbstractFileSystem):
         fo = kwargs.get("fo", args[0] if args else "")
         target_options = dict(kwargs.get("target_options") or {})
         target_protocol = kwargs.get("target_protocol")
-        location = underlying_location(fo)
+        location = store_location(fo, kwargs.get("store_uri", ""))
         if not location and target_protocol is None:
             return None
         try:
@@ -112,16 +126,18 @@ class NXetFileSystem(fsspec.AbstractFileSystem):
         max_xorb_bytes: int = MAX_XORB_BYTES,
         max_xorb_chunks: int = MAX_XORB_CHUNKS,
         max_open_xorbs: int = 16,
+        store_uri: Optional[str] = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
-        location = underlying_location(fo)
+        location = store_location(fo, store_uri or "")
         target_options = dict(target_options or {})
         if not location and target_protocol is None:
             raise ValueError(
                 "nxet:// needs an underlying filesystem to store its xorbs, e.g. "
-                "'nxet://data.csv::file:///tmp/my-nxet-store' or "
-                "NXetFileSystem(fo='/tmp/my-nxet-store', target_protocol='file')"
+                "'nxet://data.csv::file:///tmp/my-store', "
+                "NXetFileSystem(store_uri='/tmp/my-store'), or the "
+                "FSSPEC_NXET_STORE_URI environment variable"
             )
         if target_protocol is None:
             underlying_fs, root = fsspec.core.url_to_fs(location, **target_options)

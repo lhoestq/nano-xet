@@ -1,10 +1,16 @@
 """``nxet`` command line: put/get/ls/cat/rm files in a store, and look at the dedup.
 
-The store is always given as a full chained uri::
+Point the CLI at a store once with ``FSSPEC_NXET_STORE_URI``, then the uris are
+just paths inside it::
+
+    export FSSPEC_NXET_STORE_URI=/tmp/my-nxet-store
+    nxet put train.csv nxet://data/train.csv
+    nxet ls nxet://data -R
+    nxet stats
+
+Without the environment variable, spell the store out after ``::``::
 
     nxet put train.csv nxet://data/train.csv::file:///tmp/my-nxet-store
-    nxet ls nxet://::file:///tmp/my-nxet-store -R
-    nxet stats nxet://::file:///tmp/my-nxet-store
 """
 
 from __future__ import annotations
@@ -31,22 +37,34 @@ def split_chain(uri: str) -> List[str]:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="nxet", description="nano-xet: deduplicated files on any filesystem"
+        prog="nxet",
+        description="nano-xet: deduplicated files on any filesystem",
+        epilog=(
+            "the store is FSSPEC_NXET_STORE_URI unless the uri says otherwise:"
+            "\n  export FSSPEC_NXET_STORE_URI=/tmp/my-store; nxet ls -R nxet://"
+            "\n  nxet ls -R nxet://::file:///tmp/my-store"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add(name: str, help_text: str, uri_optional: bool = False):
         p = sub.add_parser(name, help=help_text)
         kwargs = {"nargs": "?", "default": "nxet://"} if uri_optional else {}
-        p.add_argument("uri", help="nxet://[path]::<underlying uri>", **kwargs)
+        p.add_argument(
+            "uri",
+            help="nxet://[path], the store coming from FSSPEC_NXET_STORE_URI "
+            'or written after "::" (nxet://data.csv::file:///tmp/store)',
+            **kwargs,
+        )
         return p
 
     put = sub.add_parser("put", help="copy local file(s) into the store")
     put.add_argument("local", nargs="+")
-    put.add_argument("uri", help="nxet://[dir/]::(<underlying uri>) destination")
+    put.add_argument("uri", help="nxet://[dir/] destination, e.g. nxet://data")
 
     get = sub.add_parser("get", help="copy file(s) out of the store")
-    get.add_argument("uri", help="nxet://<path>::<underlying uri> (or directory with -r)")
+    get.add_argument("uri", help="nxet://<path> (or a directory, with -r)")
     get.add_argument("local", help="local file or directory")
     get.add_argument("-r", "--recursive", action="store_true")
 

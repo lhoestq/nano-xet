@@ -1,11 +1,14 @@
 """End-to-end tests of the nano-xet storage engine."""
 
 import json
+import shutil
+from pathlib import Path
 
 import pytest
 
 from nano_xet import NXetStore
 from nano_xet.index import FILES_INDEX_NAME, HEADER_NAME, XORBS_INDEX_NAME
+from nano_xet.index import NXetError
 from nano_xet.store import MAX_XORB_BYTES
 
 
@@ -185,10 +188,60 @@ def test_invalid_and_reserved_paths(store, csv_data):
     with pytest.raises(ValueError):
         store.write_file("../escape", csv_data)
     with pytest.raises(ValueError):
-        store.write_file(HEADER_NAME, csv_data)
+        store.write_file(".nxet", csv_data)
+    with pytest.raises(ValueError):
+        store.write_file(".nxet/nxet.json", csv_data)
     with pytest.raises(ValueError):
         store.write_file("whatever.xorb", csv_data)
+    # the index moved to .nxet/, so these names are ordinary files again
+    store.write_file(HEADER_NAME, csv_data)
+    assert store.read_file(HEADER_NAME) == csv_data
     assert store.normalize("/a//b/./c/") == "a/b/c"
+
+
+def test_index_lives_in_the_nxet_directory(store_path, csv_data):
+    """The store root only holds xorbs and the .nxet/ directory."""
+    store = NXetStore.open(f"file://{store_path}")
+    store.write_file("dir/a.csv", csv_data)
+    store.write_file("dir/b.csv", csv_data * 2)
+    store.delete_file("dir/a.csv")
+    store.close()
+
+    root = Path(store_path)
+    assert {p.name for p in root.iterdir()} == {".nxet", *[
+        p.name for p in root.glob("*.xorb")
+    ]}
+    assert list(root.glob("*.xorb")), "the xorbs stay at the root"
+    assert sorted(p.name for p in (root / ".nxet").iterdir()) == [
+        FILES_INDEX_NAME,
+        HEADER_NAME,
+        XORBS_INDEX_NAME,
+    ]
+    # and nothing outside .nxet/ is json
+    assert not [p for p in root.iterdir() if p.suffix == ".json"]
+
+
+def test_pre_0_1_layout_is_reported_not_ignored(store_path, csv_data):
+    """A store with its index at the root is refused, not silently re-created."""
+    old = NXetStore.open(f"file://{store_path}")
+    old.write_file("a.csv", csv_data)
+    old.close()
+
+    root = Path(store_path)
+    for name in (HEADER_NAME, FILES_INDEX_NAME, XORBS_INDEX_NAME):
+        shutil.move(str(root / ".nxet" / name), str(root / name))
+    shutil.rmtree(root / ".nxet")
+
+    with pytest.raises(NXetError, match=r"\.nxet"):
+        NXetStore.open(f"file://{store_path}")
+
+    # moving them back is all it takes
+    (root / ".nxet").mkdir()
+    for name in (HEADER_NAME, FILES_INDEX_NAME, XORBS_INDEX_NAME):
+        shutil.move(str(root / name), str(root / ".nxet" / name))
+    store = NXetStore.open(f"file://{store_path}")
+    assert store.read_file("a.csv") == csv_data
+    store.close()
 
 
 def test_xorb_split_when_too_big(store_path, csv_data):
@@ -213,10 +266,32 @@ def test_store_on_another_underlying_filesystem(csv_data):
     assert store.index.total_stored_bytes() == len(store.read_file("dir/a.csv"))
     names = [n for n in mem.ls("/in-memory-store", detail=False)]
     assert any(n.endswith(".xorb") for n in names)
-    assert HEADER_NAME in [n.rsplit("/", 1)[-1] for n in names]
+    assert "/in-memory-store/.nxet" in names
+    index_names = [n.rsplit("/", 1)[-1] for n in mem.ls("/in-memory-store/.nxet", detail=False)]
+    assert HEADER_NAME in index_names
     store.close()
 
 
 def test_not_a_store_error(store_path):
     with pytest.raises(Exception, match="not a nano-xet store"):
         NXetStore.open(f"file://{store_path}/does-not-exist", create=False)
+
+
+def test_stats_count_dedup_on_referenced_chunks(store, csv_data):
+    """Deleted bytes are garbage, they must never make dedup look negative."""
+    store.write_file("a.csv", csv_data)
+    store.write_file("b.csv", csv_data[::-1])  # different content, no sharing
+    stats = store.stats()
+    assert stats.files == 2 and stats.unique_chunks == stats.stored_chunks
+    assert stats.dedup_bytes == 0 and stats.garbage_chunks == 0
+
+    store.delete_file("b.csv")
+    after = store.stats()
+    assert after.dedup_bytes == 0  # not negative: garbage is not dedup
+    assert after.garbage_chunks == after.stored_chunks - after.unique_chunks == 2
+    assert after.garbage_bytes > 0
+    assert "garbage" in after.summary()
+
+    assert store.gc()  # the orphaned xorb goes away
+    assert store.stats().garbage_chunks == 0
+    assert "garbage" not in store.stats().summary()

@@ -1,6 +1,7 @@
 """Tests of the ``nxet://`` fsspec filesystem."""
 
 import io
+from uuid import uuid4
 
 import fsspec
 import pytest
@@ -332,3 +333,38 @@ def test_chained_uri_on_memory_filesystem():
     fs.pipe_file("a/b.txt", b"hello memory xet\n")
     assert fs.cat_file("a/b.txt") == b"hello memory xet\n"
     assert "nxet.json" in [name.rsplit("/", 1)[-1] for name in fs.underlying_fs.find(fs.root)]
+
+
+def test_store_uri_is_an_alias_of_fo(store_path, csv_data):
+    fs = NXetFileSystem(store_uri=f"file://{store_path}")
+    fs.pipe_file("a.csv", csv_data)
+    assert fs.cat_file("a.csv") == csv_data
+    assert fs == NXetFileSystem(fo=str(store_path), target_protocol="file")
+
+
+def test_store_uri_from_the_environment(store_path, csv_data):
+    """FSSPEC_NXET_STORE_URI makes plain `nxet://path` uris usable on its own."""
+    import fsspec
+    from fsspec.config import conf, set_conf_env
+
+    saved = {k: v for k, v in conf.items()}
+    try:
+        set_conf_env(conf, {"FSSPEC_NXET_STORE_URI": str(store_path)})
+        assert conf["nxet"]["store_uri"] == str(store_path)
+
+        with fsspec.open("nxet://data/train.csv", "wb") as f:  # no `::store` here
+            f.write(csv_data)
+        with fsspec.open("nxet://data/train.csv", "rb") as f:
+            assert f.read() == csv_data
+
+        fs = fsspec.filesystem("nxet")
+        assert fs.root == str(store_path)
+        assert fs.ls("data", detail=False) == ["data/train.csv"]
+
+        # an explicit chained uri still wins over the environment
+        other = NXetFileSystem(fo=f"nxet://x.csv::memory:///{uuid4().hex}")
+        assert other.root != str(store_path)
+    finally:
+        conf.clear()
+        conf.update(saved)
+        NXetFileSystem.clear_instance_cache()

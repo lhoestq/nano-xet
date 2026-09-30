@@ -1,13 +1,15 @@
-"""The nano-xet index: the link files stored at the root of the underlying filesystem.
+"""The nano-xet index: the link files, kept together in ``.nxet/``.
 
 Layout of a nano-xet store (all names relative to the store root)::
 
-    nxet.json           header: format version, chunking parameters, counters
-    nxet.xorbs.jsonl    one line per xorb: xorb -> [(chunk hash, size, offset)]
-    nxet.files.jsonl    append-only log: file -> [(chunk hash, size)], plus "rm" tombstones
-    000000-<hex>.xorb   the xorb objects themselves (concatenated chunks)
+    .nxet/nxet.json           header: format version, chunking parameters, counters
+    .nxet/nxet.xorbs.jsonl    one line per xorb: xorb -> [(chunk hash, size, offset)]
+    .nxet/nxet.files.jsonl    append-only log: file -> [(chunk hash, size)], + "rm" tombstones
+    000000-<hex>.xorb         the xorb objects themselves (concatenated chunks)
 
-Everything is JSON/JSONL so a demo store can be read and grepped by eye.
+The three link files live in their own directory so the store root only holds
+xorbs, and everything is JSON/JSONL so a demo store can be read and grepped by
+eye.
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ from .hashing import HASH_ALGORITHM
 HEADER_NAME = "nxet.json"
 XORBS_INDEX_NAME = "nxet.xorbs.jsonl"
 FILES_INDEX_NAME = "nxet.files.jsonl"
+# the three files above live here, so the store root only holds xorbs
+INDEX_DIR = ".nxet"
 XORB_SUFFIX = ".xorb"
 FORMAT_NAME = "nano-xet"
 FORMAT_VERSION = 1
@@ -125,11 +129,17 @@ class NXetIndex:
 
     # -- paths ------------------------------------------------------------
 
-    def path(self, name: str) -> str:
-        return f"{self.root}/{name}" if self.root else name
+    def dir_path(self) -> str:
+        """Directory holding the index files: ``<root>/.nxet``."""
+        return f"{self.root}/{INDEX_DIR}" if self.root else INDEX_DIR
+
+    def path(self, name: str = "") -> str:
+        """Path of an index file, inside ``<root>/.nxet``."""
+        return f"{self.dir_path()}/{name}" if name else self.dir_path()
 
     def xorb_path(self, xorb_name: str) -> str:
-        return self.path(xorb_name)
+        """Path of a xorb: those stay at the root of the underlying filesystem."""
+        return f"{self.root}/{xorb_name}" if self.root else xorb_name
 
     # -- loading ----------------------------------------------------------
 
@@ -139,10 +149,19 @@ class NXetIndex:
         try:
             raw = fs.cat_file(index.path(HEADER_NAME))
         except FileNotFoundError:
+            if index._legacy_layout():
+                raise NXetError(
+                    f"{root or '.'}: index files are at the root instead of "
+                    f"'{INDEX_DIR}/' (nano-xet < 0.1 layout): move {HEADER_NAME}, "
+                    f"{FILES_INDEX_NAME} and {XORBS_INDEX_NAME} into "
+                    f"'{root or '.'}/{INDEX_DIR}/'"
+                ) from None
             if not create:
                 raise NXetError(
-                    f"{root or '.'} is not a nano-xet store ({HEADER_NAME} not found)"
+                    f"{root or '.'} is not a nano-xet store ({INDEX_DIR}/{HEADER_NAME} "
+                    "not found)"
                 )
+            index._make_index_dir()
             index.save_header()
             index._append(FILES_INDEX_NAME, "")  # touch the two index files
             index._append(XORBS_INDEX_NAME, "")
@@ -171,6 +190,24 @@ class NXetIndex:
             except (FileNotFoundError, OSError):
                 sizes.append(None)
         return tuple(sizes)
+
+    def _legacy_layout(self) -> bool:
+        """True when a pre-0.1 store keeps its index files at the root."""
+        name = f"{self.root}/{HEADER_NAME}" if self.root else HEADER_NAME
+        try:
+            raw = self.fs.cat_file(name)
+        except (FileNotFoundError, OSError):
+            return False
+        try:
+            return json.loads(raw or b"{}").get("format") == FORMAT_NAME
+        except ValueError:
+            return False
+
+    def _make_index_dir(self) -> None:
+        try:
+            self.fs.makedirs(self.dir_path(), exist_ok=True)
+        except (NotImplementedError, OSError):  # filesystems without directories
+            pass
 
     def is_stale(self) -> bool:
         """True when the index files changed on the underlying filesystem."""

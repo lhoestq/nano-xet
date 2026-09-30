@@ -7,3 +7,8 @@ __pycache__/
 build/
 dist/
 .coverage
+.coverage.*
+htmlcov/
+
+# local scratch stores
+/tmp/

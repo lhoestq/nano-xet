@@ -26,6 +26,7 @@ from .hashing import chunk_hash, merkle_hash, xorb_hash
 from .index import (
     FILES_INDEX_NAME,
     HEADER_NAME,
+    INDEX_DIR,
     XORBS_INDEX_NAME,
     FileRecord,
     NXetIndex,
@@ -36,7 +37,9 @@ from .index import (
 MAX_XORB_BYTES = 64 * 1024 * 1024
 MAX_XORB_CHUNKS = 8 * 1024
 
-RESERVED_NAMES = (HEADER_NAME, FILES_INDEX_NAME, XORBS_INDEX_NAME)
+# Paths a user cannot write to: the index directory and anything that looks
+# like a xorb (both live at the root of the underlying filesystem).
+RESERVED_NAMES = (INDEX_DIR, HEADER_NAME, FILES_INDEX_NAME, XORBS_INDEX_NAME)
 
 
 @dataclass
@@ -46,11 +49,21 @@ class Stats:
     files: int = 0
     logical_bytes: int = 0
     chunks: int = 0
+    unique_chunks: int = 0
     dedup_chunks: int = 0
     dedup_bytes: int = 0
     stored_chunks: int = 0
     stored_bytes: int = 0
     xorbs: int = 0
+
+    @property
+    def garbage_chunks(self) -> int:
+        """Stored chunks no live file references anymore (what `gc` removes)."""
+        return max(self.stored_chunks - self.unique_chunks, 0)
+
+    @property
+    def garbage_bytes(self) -> int:
+        return max(self.stored_bytes - (self.logical_bytes - self.dedup_bytes), 0)
 
     @property
     def dedup_ratio(self) -> float:
@@ -70,26 +83,33 @@ class Stats:
             "files": self.files,
             "logical_bytes": self.logical_bytes,
             "chunks": self.chunks,
+            "unique_chunks": self.unique_chunks,
             "dedup_chunks": self.dedup_chunks,
             "dedup_bytes": self.dedup_bytes,
             "stored_chunks": self.stored_chunks,
             "stored_bytes": self.stored_bytes,
+            "garbage_chunks": self.garbage_chunks,
+            "garbage_bytes": self.garbage_bytes,
             "xorbs": self.xorbs,
             "dedup_ratio": self.dedup_ratio,
         }
 
     def summary(self) -> str:
         saved = 100.0 * self.dedup_ratio
-        return "\n".join(
-            [
-                f"{self.files} file(s), {self.chunks} chunk(s), {self.xorbs} xorb(s)",
-                f"logical : {human_bytes(self.logical_bytes)}",
-                f"stored  : {human_bytes(self.stored_bytes)}"
-                f" ({self.stored_chunks} unique chunk(s))",
-                f"dedup   : {human_bytes(self.dedup_bytes)} saved ({saved:.1f}%)"
-                f" [{self.dedup_chunks} chunk(s) reused]",
-            ]
-        )
+        lines = [
+            f"{self.files} file(s), {self.chunks} chunk(s), {self.xorbs} xorb(s)",
+            f"logical : {human_bytes(self.logical_bytes)}",
+            f"stored  : {human_bytes(self.stored_bytes)}"
+            f" ({self.stored_chunks} unique chunk(s))",
+            f"dedup   : {human_bytes(self.dedup_bytes)} saved ({saved:.1f}%)"
+            f" [{self.dedup_chunks} chunk(s) reused]",
+        ]
+        if self.garbage_chunks:
+            lines.append(
+                f"garbage : {human_bytes(self.garbage_bytes)}"
+                f" in {self.garbage_chunks} unreferenced chunk(s), run gc"
+            )
+        return "\n".join(lines)
 
 
 def human_bytes(size: float) -> str:
@@ -201,8 +221,11 @@ class NXetStore:
         return posixpath.join(*parts) if parts else ""
 
     def _check_writable(self, path: str) -> None:
-        if path in RESERVED_NAMES or path.endswith(".xorb"):
-            raise ValueError(f"{path!r} collides with a nano-xet index file")
+        if path.split("/")[0] == INDEX_DIR or path.endswith(".xorb"):
+            raise ValueError(
+                f"{path!r} collides with nano-xet's own files (the '{INDEX_DIR}/' "
+                "directory and '*.xorb' are reserved)"
+            )
 
     # -- writing ----------------------------------------------------------
 
@@ -428,11 +451,15 @@ class NXetStore:
         stats.xorbs = len(self.index.xorbs)
         stats.stored_chunks = len(self.index.chunks)
         stats.stored_bytes = self.index.total_stored_bytes()
+        referenced: Dict[str, int] = {}  # the chunks live files point at
         for record in self.index.files.values():
             stats.logical_bytes += record.size
             stats.chunks += record.nchunks
-        stats.dedup_chunks = stats.chunks - stats.stored_chunks
-        stats.dedup_bytes = stats.logical_bytes - stats.stored_bytes
+            for hash_hex, size in record.chunks:
+                referenced.setdefault(hash_hex, size)
+        stats.unique_chunks = len(referenced)
+        stats.dedup_chunks = stats.chunks - stats.unique_chunks
+        stats.dedup_bytes = stats.logical_bytes - sum(referenced.values())
         return stats
 
     def __repr__(self) -> str:

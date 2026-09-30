@@ -32,7 +32,9 @@ def main(store_dir: str = "") -> None:
     keep = bool(store_dir)
     store_dir = store_dir or tempfile.mkdtemp(prefix="nano-xet-demo-")
     underlying = f"file://{store_dir}"
-    fs = NXetFileSystem(fo=store_dir, target_protocol="file")
+    # one filesystem for the whole demo; `store_uri` is also read from
+    # FSSPEC_NXET_STORE_URI, which lets scripts use plain "nxet://…" paths
+    fs = NXetFileSystem(store_uri=underlying)
 
     v1 = make_rows(400_000)
     half = len(v1) // 2
@@ -41,12 +43,12 @@ def main(store_dir: str = "") -> None:
 
     # --- write both versions, through plain fsspec ------------------------
     with fsspec.open(f"nxet://data/users-v1.csv::{underlying}", "wb") as f:
-        f.write(v1)
+        f.write(v1)  # the chained form: the file, then "::", then where it lives
     fs.pipe_file("data/users-v2.csv", v2)  # same thing with the filesystem object
     print("wrote nxet://data/users-v1.csv and nxet://data/users-v2.csv\n")
 
     # --- what the store looks like -----------------------------------------
-    print(f"nxet://::file://{store_dir}")
+    print(f"{fs!r}")
     for entry in sorted(fs.find("", detail=True).values(), key=lambda e: e["name"]):
         print(f"  {entry['name']:>22}  {entry['size'] / 1e6:6.1f} MB  {entry['nchunks']} chunks")
     print("\nphysical xorbs (each one holds many chunks):")
@@ -66,13 +68,18 @@ def main(store_dir: str = "") -> None:
     print(f"\n{fs.stats().summary()}")
 
     # --- the same store, without fsspec ----------------------------------
-    with NXetStore.open(f"nxet://::{underlying}") as store:
+    with NXetStore.open(underlying) as store:
         assert store.read_file("data/users-v1.csv") == v1
         assert store.read_file("data/users-v2.csv") == v2
-    print("\nNXetStore.open() reads the same store back without fsspec")
+        print("\nindex files of this store:")
+        for name in ("nxet.json", "nxet.files.jsonl", "nxet.xorbs.jsonl"):
+            path = store.index.path(name)
+            print(f"  {path}  ({store.fs.info(path)['size']} bytes)")
+    print("NXetStore.open() reads the same store back without fsspec")
 
     if keep:
-        print(f"\nstore kept in {store_dir}\ntry: nxet ls -R nxet://::file://{store_dir}")
+        print(f"\nstore kept in {store_dir}")
+        print(f"try: FSSPEC_NXET_STORE_URI={store_dir} nxet ls -R nxet://")
     else:
         shutil.rmtree(store_dir, ignore_errors=True)
         print(f"\n(temporary store {store_dir} removed)")

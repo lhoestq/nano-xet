@@ -2,10 +2,13 @@
 
 Quick start::
 
+    export FSSPEC_NXET_STORE_URI=/tmp/my-nxet-store   # optional, see below
+
     import fsspec
-    with fsspec.open("nxet://data/train.csv::file:///tmp/my-nxet-store", "wb") as f:
+    with fsspec.open("nxet://data/train.csv", "wb") as f:   # needs the env var
         f.write(b"hello nano-xet\\n")
 
+    # ... or name the store inline, on any filesystem fsspec knows:
     with fsspec.open("nxet://data/train.csv::file:///tmp/my-nxet-store", "rb") as f:
         print(f.read())
 
