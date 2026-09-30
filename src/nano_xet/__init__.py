@@ -33,7 +33,7 @@ from .hashing import chunk_hash, merkle_hash, xorb_hash
 from .index import FileRecord, NXetIndex, XorbRecord
 from .store import NXetStore, Stats
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "Chunker",
