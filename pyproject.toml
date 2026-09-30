@@ -8,14 +8,30 @@ version = "0.1.0"
 description = "A toy Xet: fsspec filesystem with gear-hash chunking, deduplication and xorbs, on any filesystem"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "Quentin Lhoest" }]
 keywords = ["fsspec", "deduplication", "chunking", "xet", "filesystem"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Filesystems",
 ]
 dependencies = ["fsspec>=2023.1.0"]
+
+[project.urls]
+Homepage = "https://github.com/lhoestq/nano-xet"
+Repository = "https://github.com/lhoestq/nano-xet"
+Issues = "https://github.com/lhoestq/nano-xet/issues"
 
 [project.optional-dependencies]
 fast = ["numpy>=1.20"]
