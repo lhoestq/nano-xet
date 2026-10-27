@@ -14,6 +14,7 @@ Any filesystem fsspec can open works as the underlying filesystem::
 
 from __future__ import annotations
 
+import datetime
 import os
 from typing import Dict, List, Optional
 
@@ -249,11 +250,19 @@ class NXetFileSystem(fsspec.AbstractFileSystem):
         path = self._strip_protocol(path)
         return not path or self._is_known_dir(path)
 
+    # fsspec says created()/modified() answer *timezone-aware datetimes* (not
+    # epoch floats like info()); consumers such as DuckDB's fsspec bridge call
+    # .timestamp() on the result.
+
+    @staticmethod
+    def _to_datetime(epoch: float) -> datetime.datetime:
+        return datetime.datetime.fromtimestamp(epoch, tz=datetime.timezone.utc)
+
     def created(self, path):
-        return self.info(path)["created"]
+        return self._to_datetime(self.info(path)["created"])
 
     def modified(self, path):
-        return self.info(path)["mtime"]
+        return self._to_datetime(self.info(path)["mtime"])
 
     # -- reading / writing ------------------------------------------------
 

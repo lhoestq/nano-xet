@@ -1,5 +1,6 @@
 """Tests of the ``nxet://`` fsspec filesystem."""
 
+import datetime
 import io
 from uuid import uuid4
 
@@ -126,6 +127,18 @@ def test_info_and_listing(fs, csv_data):
     assert not fs.exists("missing")
     with pytest.raises(FileNotFoundError):
         fs.ls("missing")
+
+
+def test_modified_and_created_are_datetimes(fs, csv_data):
+    # fsspec promises timezone-aware datetimes; consumers like DuckDB's fsspec
+    # bridge call .timestamp() on the result.
+    fs.pipe_file("top.txt", b"top")
+    epoch = fs.info("top.txt")["mtime"]
+
+    for ts in (fs.modified("top.txt"), fs.created("top.txt")):
+        assert isinstance(ts, datetime.datetime)
+        assert ts.tzinfo is not None
+        assert ts.timestamp() == pytest.approx(epoch)
 
 
 def test_walk_find_glob(fs, csv_data):
